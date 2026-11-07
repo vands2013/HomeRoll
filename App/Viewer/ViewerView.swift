@@ -8,6 +8,7 @@ struct ViewerView: View {
     @State private var selection: String = ""
     @State private var chrome = true
     @State private var showInfo = false
+    @State private var showAirPlay = false
     @State private var editing: Asset?
     @State private var sheet: ActionSheet?
     @State private var video = VideoState()
@@ -48,7 +49,7 @@ struct ViewerView: View {
                     Spacer()
                     if a.isVideo { VideoControls(video: video).padding(.bottom, 6) }
                     if assets.count > 1 || a.isVideo {
-                        ScrubberStrip(assets: assets, selection: $selection, video: video) { on in
+                        ScrubberStrip(assets: assets, selection: $selection) { on in
                             stripScrubbing = on
                             if !on { settled(selection) }
                         }
@@ -85,6 +86,13 @@ struct ViewerView: View {
             if a.isVideo { VideoTrimView(asset: a) { result in replace(a, with: result) } }
             else { EditorView(asset: a) { result in replace(a, with: result) } }
         }
+        .sheet(isPresented: $showAirPlay) {
+            VStack(spacing: 16) {
+                Text("AirPlay").font(.headline)
+                AirPlayButton().frame(width: 60, height: 60)
+                Text("Choose an AirPlay device").font(.subheadline).foregroundStyle(.secondary)
+            }.presentationDetents([.height(200)])
+        }
         .sheet(isPresented: $showInfo) {
             if let a = current {
                 InfoSheet(asset: a, lookUp: analysis.hasLookUp(a.id) ? { showInfo = false; analysis.lookUp = true } : nil)
@@ -109,24 +117,18 @@ struct ViewerView: View {
             .glassEffect(.regular.interactive(), in: .circle)
             Spacer()
             VStack(spacing: 1) {
-                Text(Fmt.relativeDay(a.date)).font(.system(size: 16, weight: .semibold))
-                Text(Fmt.time.string(from: a.date) + (a.city.map { " · \($0)" } ?? ""))
+                Text(Fmt.relativeDay(a.date, fallback: Calendar.wall.component(.year, from: a.date) == Calendar.wall.component(.year, from: Date()) ? Fmt.dayLongMonth : Fmt.dayLongMonthYear)).font(.system(size: 16, weight: .semibold))
+                Text(Fmt.time.string(from: a.date))
                     .font(.system(size: 12)).opacity(0.8)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 16).padding(.vertical, 6)
             .glassEffect(.regular, in: .capsule)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("viewer.date-header")
             Spacer()
-            if a.isVideo {
-                Button { video.muted.toggle() } label: {
-                    Image(systemName: video.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                        .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white).frame(width: 46, height: 46).contentShape(.rect)
-                }
-                .glassEffect(.regular.interactive(), in: .circle)
-                .accessibilityLabel(video.muted ? String(localized: "Ton an") : String(localized: "Ton aus"))
-                AirPlayButton().frame(width: 46, height: 46).glassEffect(.regular.interactive(), in: .circle)
-            }
             Menu {
+                if a.isVideo { Button("AirPlay", systemImage: "airplay.video") { showAirPlay = true } }
                 AssetMenu(assets: [a], style: .viewer, present: { sheet = $0 }) { removeLocal(a) }
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 18, weight: .semibold))
@@ -893,4 +895,5 @@ enum Provenance {
         return app.map { String(localized: "Gespeichert aus \($0)") }
     }
 }
+
 

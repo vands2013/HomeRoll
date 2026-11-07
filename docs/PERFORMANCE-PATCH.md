@@ -13,6 +13,8 @@ This branch changes the iPhone app and its build workflow. It does not change an
 - Coalesce full-library loads, skip publishing unchanged timeline snapshots, share disk image decodes/downloads, and cache thumbnail version preferences.
 - Configure explicit video playback as AVAudioSession.playback/moviePlayback so the phone's ringer Silent mode does not suppress video sound. Keep the in-app mute control and release the session when playback stops.
 
+- Use a separate compact play/progress/mute capsule for videos, with a centred date/time header. The bottom strip has one thumbnail per file; no playback-frame requests are generated. AirPlay remains available in the More menu.
+
 ## Validation
 
 GitHub Actions runs clustering checks with 85,000 generated locations, native simulator tests for audio configuration, compass positioning, annotation reuse, unchanged timeline snapshots, and background-work cancellation, plus UI tests that load Apple Maps tiles and pan, zoom, and rotate a map backed by 85,000 synthetic locations. The fixture is Debug-only and requires no Immich account. The Release IPA excludes it.

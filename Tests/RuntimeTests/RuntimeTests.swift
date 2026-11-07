@@ -61,4 +61,21 @@ import MapKit
         view.show(two)
         XCTAssertEqual(view.accessibilityLabel, "Second, 2 photos")
     }
+
+    func testVideoStripHasOneThumbnailPerFileRegardlessOfDuration() {
+        let assets = (0..<6).map { i in
+            let id = "strip-test-\(i)"
+            ImageCache.shared.setHash(id, nil)
+            return Asset(id: id, isImage: false, isFavorite: false, date: Date(), ratio: 1,
+                         durationMs: i == 3 ? 3_600_000 : 1000, livePhotoVideoId: nil, city: nil, country: nil)
+        }
+        let strip = ScrubberView(frame: CGRect(x: 0, y: 0, width: 390, height: 30))
+        strip.update(assets: assets, selection: assets[3].id)
+        strip.layoutIfNeeded()
+        XCTAssertEqual(Set(strip.displayedAssetIDs), Set(assets.map(\.id)))
+        XCTAssertEqual(strip.displayedAssetIDs.count, assets.count)
+        let thumbnails = strip.subviews.flatMap(\.subviews).filter { $0.accessibilityIdentifier == "viewer.thumbnail.\(assets[3].id)" }
+        XCTAssertEqual(thumbnails.count, 1)
+        XCTAssertLessThan(thumbnails.first?.frame.width ?? 1000, 60)
+    }
 }

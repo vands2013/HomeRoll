@@ -16,6 +16,7 @@ struct FotosApp: App {
             Group {
                 #if DEBUG
                 if ProcessInfo.processInfo.environment["FOTOS_MAP_DEMO"] == "1" { MapPerfDemo() }
+                else if ProcessInfo.processInfo.environment["FOTOS_VIEWER_DEMO"] == "1" { ViewerPerfDemo() }
                 else if app.loggedIn { RootView() } else { LoginView() }
                 #else
                 if app.loggedIn { RootView() } else { LoginView() }

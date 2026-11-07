@@ -50,6 +50,14 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             -quiet 2>&1 | tee simulator-tests.log
           xcrun simctl io "$SIM_DEVICE" screenshot map-simulator.png
+      - name: Summarize simulator results
+        if: always()
+        run: |
+          if [ -d HomeRoll-tests.xcresult ]; then
+            xcrun xcresulttool get test-results summary --path HomeRoll-tests.xcresult | tee simulator-summary.json
+            xcrun xcresulttool get test-results tests --path HomeRoll-tests.xcresult > simulator-test-tree.json
+            xcrun xcresulttool export attachments --path HomeRoll-tests.xcresult --output-path test-attachments || true
+          fi
       - name: Build sideloadable IPA
         run: |
           set -o pipefail
@@ -100,6 +108,9 @@ jobs:
           path: |
             build-ipa.log
             simulator-tests.log
+            simulator-summary.json
+            simulator-test-tree.json
+            test-attachments
             HomeRoll-tests.xcresult
             map-simulator.png
           if-no-files-found: ignore

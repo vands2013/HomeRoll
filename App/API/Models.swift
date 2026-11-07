@@ -277,6 +277,7 @@ enum Fmt {
     static let time = make("HH:mm")
     static let weekday = make("EEEE")
     static let dayMonthYearUpper = make("d MMM yyyy")
+    static let dayLongMonth = make("d MMMM")
     static let dayLongMonthYear = make("d MMMM yyyy")              // 26. August 2019
     static let fullDate = make("EEEE d MMMM yyyy")                 // Montag, 26. August 2019
 
@@ -299,4 +300,5 @@ enum Fmt {
                          : String(format: "%d:%02d", s / 60, s % 60)
     }
 }
+
 

@@ -17,15 +17,12 @@ final class VideoState {
     } }
     private(set) var time: Double = 0
     private(set) var duration: Double = 0
-    /// Standbilder für den Filmstreifen (vom Server-Video, in kleiner Größe)
-    private(set) var frames: [UIImage] = []
     /// Zeitlupe (120/240 fps): wird verlangsamt abgespielt wie bei Apple
     private(set) var slowMo: SlowMo?
     /// Beim Ziehen am Filmstreifen nicht vom Player überschreiben lassen
     @ObservationIgnored var scrubbing = false
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var endObserver: NSObjectProtocol?
-    @ObservationIgnored private var framesTask: Task<Void, Never>?
 
     /// Neues Video zeigen (alter Player wird angehalten und freigegeben).
     func attach(_ asset: Asset) {
@@ -47,7 +44,6 @@ final class VideoState {
             }
         }
         observeEnd(p)
-        loadFrames(av)
         let want = asset.id
         Task { [weak self] in
             guard let s = await SlowMo.detect(av), let comp = try? await s.composition(av) else { return }
@@ -110,7 +106,7 @@ final class VideoState {
         scrubbing = false
         let t = pendingSeek ?? time
         pendingSeek = nil
-        startSeek(t, exact: true)
+        if seeking { pendingSeek = t } else { startSeek(t, exact: true) }
         if resume { play() }
     }
 
@@ -121,7 +117,7 @@ final class VideoState {
         let tol = exact ? CMTime.zero : CMTime(seconds: 0.15, preferredTimescale: 600)
         p.seek(to: CMTime(seconds: t, preferredTimescale: 600), toleranceBefore: tol, toleranceAfter: tol) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.player === p else { return }
                 self.seeking = false
                 if let next = self.pendingSeek { self.pendingSeek = nil; self.startSeek(next, exact: !self.scrubbing) }
             }
@@ -134,36 +130,10 @@ final class VideoState {
         if let o = timeObserver { player?.removeTimeObserver(o) }
         if let e = endObserver { NotificationCenter.default.removeObserver(e) }
         timeObserver = nil; endObserver = nil
-        framesTask?.cancel(); framesTask = nil
-        player = nil; playing = false; time = 0; frames = []; id = ""; slowMo = nil
+        player = nil; playing = false; time = 0; id = ""; slowMo = nil
         seeking = false; pendingSeek = nil; scrubbing = false
     }
 
-    /// ~14 Standbilder gleichmäßig über das Video (Bereichsanfragen an den Server, nicht das ganze Video).
-    private func loadFrames(_ av: AVURLAsset) {
-        let want = id, count = 14
-        framesTask = Task { [weak self] in
-            // Let playback start before generating fourteen network-backed preview frames.
-            do { try await Task.sleep(for: .milliseconds(600)) } catch { return }
-            let gen = AVAssetImageGenerator(asset: av)
-            gen.appliesPreferredTrackTransform = true
-            gen.maximumSize = CGSize(width: 160, height: 160)
-            gen.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
-            gen.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
-            guard let d = try? await av.load(.duration).seconds, d.isFinite, d > 0 else { return }
-            let times = (0..<count).map { CMTime(seconds: d * (Double($0) + 0.5) / Double(count), preferredTimescale: 600) }
-            var out: [UIImage] = []
-            for await r in gen.images(for: times) {
-                if Task.isCancelled { return }
-                if let img = try? r.image { out.append(UIImage(cgImage: img)) }
-                if out.count % 4 == 0 || out.count == count {
-                    guard let self, self.id == want else { return }
-                    self.frames = out
-                }
-            }
-            if let self, self.id == want { self.frames = out }
-        }
-    }
 }
 
 /// Bildfläche für den Player (ohne AVKit-Knöpfe).
@@ -180,27 +150,43 @@ struct PlayerSurface: UIViewRepresentable {
     }
 }
 
-/// Über der Vorschau-Leiste beim Video: Wiedergabe/Pause und Restzeit. Gespult wird in der Leiste selbst
-/// (das Video ist dort eingebettet, die Mitte ist der Abspielkopf – siehe ScrubberStrip).
+/// Photos-style playback controls, independent of the file-thumbnail strip.
 struct VideoControls: View {
     @Bindable var video: VideoState
+    @State private var resumeAfterScrub = false
 
     var body: some View {
-        HStack {
+        HStack(spacing: 6) {
             Button { video.toggle() } label: {
                 Image(systemName: video.playing ? "pause.fill" : "play.fill")
-                    .font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
-                    .frame(width: 40, height: 40).contentShape(.rect)
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 36, height: 44).contentShape(.rect)
             }
-            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityIdentifier("viewer.video-play")
             .accessibilityLabel(video.playing ? String(localized: "Pause") : String(localized: "Wiedergabe"))
-            Spacer()
-            Text(Fmt.duration(Int(max(0, video.duration - video.time) * 1000)))
-                .font(.system(size: 13, weight: .semibold).monospacedDigit()).foregroundStyle(.white)
-                .padding(.horizontal, 10).frame(height: 28)
-                .glassEffect(.regular, in: .capsule)
+            Slider(value: Binding(get: {
+                video.duration > 0 ? min(1, max(0, video.time / video.duration)) : 0
+            }, set: { video.scrub(to: $0) }), in: 0...1, onEditingChanged: { editing in
+                if editing { resumeAfterScrub = video.playing; video.beginScrub() }
+                else { video.endScrub(resume: resumeAfterScrub) }
+            }) { Text("Video playback position") }
+            .labelsHidden()
+            .tint(.white)
+            .disabled(video.duration <= 0)
+            .accessibilityIdentifier("viewer.video-progress")
+            Button { video.muted.toggle() } label: {
+                Image(systemName: video.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(width: 36, height: 44).contentShape(.rect)
+            }
+            .accessibilityIdentifier("viewer.video-mute")
+            .accessibilityLabel(video.muted ? String(localized: "Ton an") : String(localized: "Ton aus"))
         }
-        .padding(.horizontal, 16)
+        .foregroundStyle(.white)
+        .padding(.horizontal, 8)
+        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 20)
+        .accessibilityIdentifier("viewer.video-controls")
     }
 }
 
