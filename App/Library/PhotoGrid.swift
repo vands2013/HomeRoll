@@ -347,7 +347,7 @@ struct PhotoGrid: UIViewRepresentable {
         let layout = GridLayout()
         let v = GridCollectionView(frame: .zero, collectionViewLayout: layout)
         v.backgroundColor = .clear
-        v.showsVerticalScrollIndicator = false
+        v.showsVerticalScrollIndicator = true
         v.contentInsetAdjustmentBehavior = .never
         v.alwaysBounceVertical = true
         let c = context.coordinator

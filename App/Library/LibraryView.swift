@@ -468,7 +468,7 @@ struct MonthsList: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .scrollIndicators(.hidden)
+            .scrollIndicators(.visible)
             .environment(\.defaultMinListRowHeight, 0)
             .ignoresSafeArea(edges: .top)
             .task {
@@ -600,7 +600,7 @@ struct YearsList: View {
             .padding(.bottom, 100)
         }
         .defaultScrollAnchor(.bottom)
-        .scrollIndicators(.hidden)
+        .scrollIndicators(.visible)
         .ignoresSafeArea(edges: .top)
         .onAppear { subtitle = "" }
     }
