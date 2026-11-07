@@ -476,7 +476,9 @@ struct MapScreen: View {
     @Environment(TimelineStore.self) private var timeline
     @Environment(\.dismiss) private var dismiss
     @State private var position: MapCameraPosition = .automatic
-    @State private var span: Double = 60
+    @State private var clusters = PhotoMapModel()
+    @State private var mapSize = CGSize(width: 390, height: 844)
+    @State private var initialPositionSet = false
     @State private var satellite = false
     @State private var opened: MapGroup?
 
@@ -491,16 +493,20 @@ struct MapScreen: View {
 
     var body: some View {
         Map(position: $position) {
-            ForEach(groups) { g in
+            ForEach(clusters.groups) { g in
                 Annotation("", coordinate: g.coord, anchor: .bottom) {
                     Button { opened = g } label: { pin(g) }.buttonStyle(.plain)
                 }
             }
         }
-        .mapStyle(satellite ? .hybrid(elevation: .realistic, pointsOfInterest: .excludingAll)
-                            : .standard(elevation: .realistic, pointsOfInterest: .excludingAll))
+        .mapStyle(satellite ? .hybrid(elevation: .flat, pointsOfInterest: .excludingAll)
+                            : .standard(elevation: .flat, pointsOfInterest: .excludingAll))
         .mapControls { MapCompass() }
-        .onMapCameraChange(frequency: .onEnd) { ctx in span = max(ctx.region.span.latitudeDelta, 0.002) }
+        .onMapCameraChange(frequency: .onEnd) { ctx in clusters.update(rect: ctx.rect, size: mapSize) }
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+            mapSize = size
+            clusters.resize(size)
+        }
         .ignoresSafeArea()
         .overlay(alignment: .top) {
             HStack {
@@ -521,7 +527,16 @@ struct MapScreen: View {
             .padding(.horizontal, 16)
         }
         .toolbar(.hidden, for: .navigationBar)
-        .onAppear { position = .region(startRegion) }
+        .task {
+            await clusters.prepare(markers)
+            setInitialPosition()
+        }
+        .onChange(of: markers) { _, value in
+            Task {
+                await clusters.prepare(value)
+                setInitialPosition()
+            }
+        }
         .navigationDestination(item: $opened) { g in
             AssetGridScreen(title: g.title, subtitle: String(localized: "\(g.ids.count) Objekte"), assets: assets(for: g.ids))
         }
@@ -542,42 +557,10 @@ struct MapScreen: View {
             }
     }
 
-    /// Start wie Apple: um den Ort mit den meisten Fotos, nicht die ganze Welt.
-    private var startRegion: MKCoordinateRegion {
-        let cell = Dictionary(grouping: markers) { "\(Int($0.lat))/\(Int($0.lon))" }.max { $0.value.count < $1.value.count }?.value ?? []
-        let c = cell.isEmpty ? CLLocationCoordinate2D(latitude: 48.7, longitude: 9.65)
-            : CLLocationCoordinate2D(latitude: cell.map(\.lat).reduce(0, +) / Double(cell.count), longitude: cell.map(\.lon).reduce(0, +) / Double(cell.count))
-        return MKCoordinateRegion(center: c, span: MKCoordinateSpan(latitudeDelta: 6, longitudeDelta: 6))
-    }
-
-    /// Zusammenfassen auf ein Raster, das mit der Zoomstufe mitwächst (~6 Felder über die Bildhöhe).
-    private var groups: [MapGroup] {
-        let cellSize = span / 6
-        var cells = Array(Dictionary(grouping: markers) { "\(Int(floor($0.lat / cellSize)))/\(Int(floor($0.lon / cellSize)))" }.values)
-        // Nachbarn, deren Bildchen sich überlappen würden, zusammenlegen (≈ 1/8 der sichtbaren Höhe)
-        func center(_ v: [MapMarkerDTO]) -> (Double, Double) {
-            (v.map(\.lat).reduce(0, +) / Double(v.count), v.map(\.lon).reduce(0, +) / Double(v.count))
-        }
-        var merged = true
-        while merged {
-            merged = false
-            outer: for i in cells.indices {
-                for j in cells.indices where j > i {
-                    let a = center(cells[i]), b = center(cells[j])
-                    if abs(a.0 - b.0) < span / 8 && abs(a.1 - b.1) < span / 8 {
-                        cells[i] += cells[j]; cells.remove(at: j); merged = true; break outer
-                    }
-                }
-            }
-        }
-        return cells.map { v in
-            let k = v.map(\.id).min() ?? ""
-            let place = Dictionary(grouping: v.compactMap(\.city), by: { $0 }).max { $0.value.count < $1.value.count }?.key
-            return MapGroup(id: "\(k)@\(cellSize)",
-                            coord: CLLocationCoordinate2D(latitude: v.map(\.lat).reduce(0, +) / Double(v.count),
-                                                          longitude: v.map(\.lon).reduce(0, +) / Double(v.count)),
-                            ids: v.map(\.id), title: place ?? String(localized: "Fotos"))
-        }
+    private func setInitialPosition() {
+        guard !initialPositionSet, !markers.isEmpty, let home = clusters.home else { return }
+        initialPositionSet = true
+        position = .region(MKCoordinateRegion(center: home, span: .init(latitudeDelta: 6, longitudeDelta: 6)))
     }
 
     private func assets(for ids: [String]) -> [Asset] {
@@ -585,4 +568,5 @@ struct MapScreen: View {
         return timeline.allLoaded.filter { set.contains($0.id) }
     }
 }
+
 

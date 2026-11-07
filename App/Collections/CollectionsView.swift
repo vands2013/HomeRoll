@@ -49,7 +49,8 @@ final class CollectionsModel {
         async let a = try? c.albums()
         async let p = try? c.people()
         async let r = try? c.random(size: 12)
-        async let mk = try? c.mapMarkers()
+        // Kartenpunkte unabhängig von den Prüfungen der empfohlenen Fotos veröffentlichen.
+        async let mk: Void = loadMarkers()
         async let me = try? c.me()
         memories = (await m ?? []).filter { !$0.assets.isEmpty }
         if let a = await a { albums = a; AlbumNames.byID = Dictionary(a.map { ($0.id, $0.albumName) }, uniquingKeysWith: { x, _ in x }) }
@@ -64,12 +65,15 @@ final class CollectionsModel {
             if await !TextHeavy.check(a) { picks.append(a) }
         }
         featured = picks
-        markers = await mk ?? []
+        await mk
         userName = (await me)?.name ?? ""
         loaded = true
         // danach einzeln prüfen (Fotos ohne KI-Merkmale fängt die Suche oben nicht)
         let bad = await SensitiveFilter.flagged(picks, account: account)
         if !bad.isEmpty { featured.removeAll { bad.contains($0.id) } }
+    }
+    private func loadMarkers() async {
+        if let result = try? await ImmichClient.shared.mapMarkers() { markers = result }
     }
 }
 
@@ -576,3 +580,4 @@ struct MapCard: View {
         return try? await MKMapSnapshotter(options: o).start().image
     }
 }
+

@@ -180,7 +180,7 @@ struct PeopleDTO: Decodable {
     let total: Int
 }
 
-struct MapMarkerDTO: Decodable, Identifiable {
+struct MapMarkerDTO: Decodable, Identifiable, Equatable, Sendable {
     let id: String
     let lat: Double
     let lon: Double
@@ -299,3 +299,4 @@ enum Fmt {
                          : String(format: "%d:%02d", s / 60, s % 60)
     }
 }
+

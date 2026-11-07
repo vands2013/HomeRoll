@@ -1,0 +1,88 @@
+name: Build map performance IPA
+
+on:
+  push:
+    branches: [map-performance]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: map-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check build tools
+        run: |
+          xcodebuild -version
+          if ! command -v xcodegen >/dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+      - name: Check clustering correctness and large-library performance
+        run: |
+          swiftc -O -parse-as-library -swift-version 6 \
+            App/Collections/PhotoMapIndex.swift Tests/PhotoMapChecks.swift \
+            -o "$RUNNER_TEMP/photo-map-checks"
+          "$RUNNER_TEMP/photo-map-checks"
+      - name: Build sideloadable IPA
+        run: |
+          set -o pipefail
+          bash build-ipa.sh 2>&1 | tee build-ipa.log
+      - name: Validate package
+        run: |
+          unzip -t build-ipa/HomeRoll.ipa
+          python3 - <<'PY'
+          import plistlib, zipfile
+          with zipfile.ZipFile('build-ipa/HomeRoll.ipa') as ipa:
+              names = ipa.namelist()
+              for path in ('Payload/HomeRoll.app/Info.plist',
+                           'Payload/HomeRoll.app/PlugIns/FotosShare.appex/Info.plist',
+                           'Payload/HomeRoll.app/PlugIns/FotosWidget.appex/Info.plist'):
+                  info = plistlib.loads(ipa.read(path))
+                  assert info['MinimumOSVersion'] == '26.0', info
+                  assert info['CFBundleExecutable'], info
+                  print(info['CFBundleIdentifier'], info['CFBundleShortVersionString'])
+              assert 'Payload/HomeRoll.app/HomeRoll' in names
+          PY
+          cd build-ipa
+          shasum -a 256 HomeRoll.ipa > SHA256.txt
+          printf 'Source commit: %s\nBuild: %s/%s/actions/runs/%s\n' \
+            "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > BUILD-INFO.txt
+      - name: Upload IPA
+        id: ipa
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: HomeRoll-MapPatch
+          path: |
+            build-ipa/HomeRoll.ipa
+            build-ipa/SHA256.txt
+            build-ipa/BUILD-INFO.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Build summary
+        env:
+          ARTIFACT_URL: ${{ steps.ipa.outputs.artifact-url }}
+        run: |
+          printf '### HomeRoll map performance test build\n\n[Download IPA package](%s)\n\nUnzip the download and sign/install HomeRoll.ipa using your usual sideloading tool.\n\nSource: `%s`\n\nNo Immich server changes or server credentials are involved in this build.\n' \
+            "$ARTIFACT_URL" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: HomeRoll-build-log
+          path: build-ipa.log
+          if-no-files-found: ignore
+          retention-days: 7
