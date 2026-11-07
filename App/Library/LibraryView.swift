@@ -247,7 +247,7 @@ struct AllGrid: View {
                   onToggle: { app.toggle($0) },
                   onSelect: { app.selected = $0 },
                   menu: { a in AssetMenuUIKit.context(a, app: app, timeline: timeline) },
-                  autoplay: app.autoplay)
+                  autoplay: app.autoplay && app.tab == .library && app.viewer == nil)
             .ignoresSafeArea()
             .overlay {
                 // Quelle des Zoom-Übergangs: unsichtbar über der Kachel (UIKit-Kacheln können selbst keine sein)
@@ -660,3 +660,4 @@ private struct AssetContextMenu: ViewModifier {
         } else { content }
     }
 }
+

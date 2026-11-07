@@ -46,7 +46,7 @@ final class BucketData {
 @MainActor @Observable
 final class TimelineStore {
     /// Älteste zuerst – die Mediathek zeigt wie Apple Fotos das Neueste unten.
-    private(set) var buckets: [TimeBucket] = []
+    private(set) var buckets: [TimeBucket] = [] { didSet { contentRevision += 1 } }
     @ObservationIgnored private var data: [String: BucketData] = [:]
     private(set) var loading = false
     var error: String?
@@ -59,6 +59,10 @@ final class TimelineStore {
     /// Zählt jede Neuberechnung – Ansichten mit teuren Ableitungen (Reisen, Letzte Tage) hängen daran.
     private(set) var version = 0
     @ObservationIgnored private var rebuildPending = false
+    @ObservationIgnored private var contentRevision = 0
+    @ObservationIgnored private var publishedRevision = -1
+    @ObservationIgnored private var loadAllTask: Task<Void, Never>?
+    @ObservationIgnored private var loadAllToken: UUID?
 
     var totalCount: Int { buckets.reduce(0) { $0 + $1.count } }
 
@@ -111,6 +115,7 @@ final class TimelineStore {
         // Erster Start: angezeigt wird schon dieses Konto → nur speichern, nicht neu aufbauen.
         if first { await reload(); return true }
         generation += 1
+        loadAllTask?.cancel(); loadAllTask = nil; loadAllToken = nil
         buckets = []; data = [:]; restored = false
         await rebuildNow()
         await reload()
@@ -169,13 +174,14 @@ final class TimelineStore {
     }
 
     func reload() async {
+        guard !loading else { return }
         loading = true; defer { loading = false }
         await restore()
         do {
             let raw = try await ImmichClient.shared.bucketsData()
             let b = try JSONDecoder().decode([TimeBucket].self, from: raw).sorted { $0.timeBucket < $1.timeBucket }
             let old = Dictionary(buckets.map { ($0.timeBucket, $0.count) }, uniquingKeysWith: { a, _ in a })
-            buckets = b
+            if buckets != b { buckets = b }
             let keep = Set(b.map(\.timeBucket))
             for k in data.keys where !keep.contains(k) { forget(k) }
             // auch Monatsdateien, die noch nicht eingelesen sind
@@ -193,7 +199,7 @@ final class TimelineStore {
             let newest = Set(b.suffix(2).map(\.timeBucket))
             for t in b where data[t.timeBucket]?.assets != nil {
                 if daily || old[t.timeBucket] != t.count || data[t.timeBucket]?.assets?.count != t.count || newest.contains(t.timeBucket) {
-                    inFlight.remove(t.timeBucket); await load(t.timeBucket, force: true)
+                    await load(t.timeBucket, force: true)
                 }
             }
             if daily { UserDefaults.standard.set(Date(), forKey: "timeline.full.\(user)") }
@@ -240,21 +246,36 @@ final class TimelineStore {
 
     /// Alles laden (für Sammlungen, Reisen, Medienarten).
     func loadAll() async {
-        guard buckets.contains(where: { bucket($0.timeBucket).assets == nil }) else { return }
-        let t = Date(); defer { PerfLog.mark(String(format: "Alles geladen in %.1f s, %d Objekte", Date().timeIntervalSince(t), allLoaded.count)) }
-        await withTaskGroup(of: Void.self) { g in
-            var running = 0
-            for b in buckets where bucket(b.timeBucket).assets == nil {
-                if running >= 6 { await g.next(); running -= 1 }
-                g.addTask { await self.load(b.timeBucket) }
-                running += 1
-            }
+        if let task = loadAllTask { await task.value; return }
+        guard buckets.contains(where: { bucket($0.timeBucket).assets == nil }) else {
+            await rebuildNow()
+            return
         }
-        await rebuildNow()
+        let token = UUID(), gen = generation
+        let task = Task { @MainActor in
+            let started = Date()
+            let missing = buckets.filter { bucket($0.timeBucket).assets == nil }
+            await withTaskGroup(of: Void.self) { group in
+                var running = 0
+                for bucket in missing {
+                    guard !Task.isCancelled, gen == generation else { break }
+                    if running >= 4 { await group.next(); running -= 1 }
+                    group.addTask { await self.load(bucket.timeBucket) }
+                    running += 1
+                }
+            }
+            guard gen == generation else { return }
+            await rebuildNow()
+            PerfLog.mark(String(format: "Library loaded: %d assets, %.1f s", allLoaded.count, Date().timeIntervalSince(started)))
+        }
+        loadAllTask = task; loadAllToken = token
+        await task.value
+        if loadAllToken == token { loadAllTask = nil; loadAllToken = nil }
     }
 
     /// Höchstens alle 0,8 s neu bündeln, solange noch Monate eintreffen.
     private func scheduleRebuild() {
+        contentRevision += 1
         guard !rebuildPending else { return }
         rebuildPending = true
         Task { try? await Task.sleep(for: .milliseconds(800)); await rebuildNow() }
@@ -265,16 +286,22 @@ final class TimelineStore {
     @ObservationIgnored private var rebuildChain: Task<Void, Never>?
     private func rebuildNow() async {
         rebuildPending = false
-        let prev = rebuildChain
-        let t = Task { @MainActor in
-            await prev?.value
-            let bs = buckets, lists = bs.map { data[$0.timeBucket]?.assets }
+        if let active = rebuildChain { await active.value; return }
+        guard publishedRevision != contentRevision else { return }
+        let revision = contentRevision, gen = generation
+        let bs = buckets, lists = bs.map { data[$0.timeBucket]?.assets }
+        let task = Task { @MainActor in
             let (all, cells, idx) = await Task.detached(priority: .userInitiated) { Self.build(bs, lists) }.value
+            guard gen == generation else { return }
             allLoaded = all; gridCells = cells; gridIndex = idx
+            publishedRevision = revision
             version += 1
         }
-        rebuildChain = t
-        await t.value
+        rebuildChain = task
+        await task.value
+        rebuildChain = nil
+        // A month may have arrived while the background snapshot was being built.
+        if gen == generation, publishedRevision != contentRevision { await rebuildNow() }
     }
 
     private nonisolated static func build(_ bs: [TimeBucket], _ lists: [[Asset]?]) -> ([Asset], [GridItemRef], [String: Int]) {
@@ -315,7 +342,9 @@ final class TimelineStore {
         if let d = cacheDir { try? FileManager.default.removeItem(at: d) }
         user = ""; UserDefaults.standard.removeObject(forKey: "timeline.user")
         generation += 1
+        loadAllTask?.cancel(); loadAllTask = nil; loadAllToken = nil
         buckets = []; data = [:]; restored = false
         allLoaded = []; gridCells = []; gridIndex = [:]; version += 1
     }
 }
+

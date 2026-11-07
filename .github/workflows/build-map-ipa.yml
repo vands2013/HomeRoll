@@ -36,6 +36,20 @@ jobs:
             App/Collections/PhotoMapIndex.swift Tests/PhotoMapChecks.swift \
             -o "$RUNNER_TEMP/photo-map-checks"
           "$RUNNER_TEMP/photo-map-checks"
+      - name: Run iPhone simulator regression checks
+        run: |
+          set -o pipefail
+          xcodegen generate -q
+          SIM_RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x.get("isAvailable") and x["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-26-2")]; print(r[0]["identifier"])')
+          SIM_DEVICE=$(xcrun simctl create 'HomeRoll map checks' com.apple.CoreSimulator.SimDeviceType.iPhone-17 "$SIM_RUNTIME")
+          xcrun simctl boot "$SIM_DEVICE"
+          xcrun simctl bootstatus "$SIM_DEVICE" -b
+          xcodebuild test -project HomeRoll.xcodeproj -scheme HomeRoll \
+            -destination "platform=iOS Simulator,id=$SIM_DEVICE" -parallel-testing-enabled NO \
+            -derivedDataPath build-simulator -resultBundlePath HomeRoll-tests.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            -quiet 2>&1 | tee simulator-tests.log
+          xcrun simctl io "$SIM_DEVICE" screenshot map-simulator.png
       - name: Build sideloadable IPA
         run: |
           set -o pipefail
@@ -64,7 +78,7 @@ jobs:
         id: ipa
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: HomeRoll-MapPatch
+          name: HomeRoll-MapPatch-v2
           path: |
             build-ipa/HomeRoll.ipa
             build-ipa/SHA256.txt
@@ -83,6 +97,11 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: HomeRoll-build-log
-          path: build-ipa.log
+          path: |
+            build-ipa.log
+            simulator-tests.log
+            HomeRoll-tests.xcresult
+            map-simulator.png
           if-no-files-found: ignore
           retention-days: 7
+

@@ -411,6 +411,7 @@ struct PhotoGrid: UIViewRepresentable {
             // gleiche Objekte, evtl. geändert (Favorit): sichtbare Kacheln neu belegen, Bild bleibt
             c.refreshVisible(content: true)
         }
+        if old.autoplay != autoplay { c.updateAutoplay() }
         if items.isEmpty { c.didInitialScroll = false }      // geleert (z. B. Kontowechsel) → danach wieder ans Ende
         if !c.didInitialScroll, !items.isEmpty {
             c.didInitialScroll = true
@@ -832,3 +833,4 @@ final class PreviewController: UIViewController {
         }
     }
 }
+

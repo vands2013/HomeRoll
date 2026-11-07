@@ -108,7 +108,7 @@ struct CollectionsView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 30) {
+                LazyVStack(alignment: .leading, spacing: 30) {
                     Color.clear.frame(height: 64)
                     ForEach(order, id: \.self) { sec in sectionView(sec) }
                 }
@@ -398,10 +398,12 @@ struct CollectionsView: View {
             let days = g.keys.sorted(by: >).prefix(10).map { DayGroup(day: $0, assets: g[$0]!) }
             return (days, CollectionsView.trips(from: all))
         }.value
+        guard !Task.isCancelled else { return }
         recentDays = days; trips = t
         for d in days where dayCovers[d.day] == nil {
             let pool = [d.keyAsset] + d.assets.filter { $0.isImage && $0.id != d.keyAsset.id && !MemoryEngine.looksLikeScreenshot($0) }
             for c in pool.prefix(8) where !MemoryEngine.looksLikeScreenshot(c) {
+                guard !Task.isCancelled else { return }
                 if await !TextHeavy.check(c) { dayCovers[d.day] = c.id; break }
             }
         }
@@ -580,4 +582,5 @@ struct MapCard: View {
         return try? await MKMapSnapshotter(options: o).start().image
     }
 }
+
 

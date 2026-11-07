@@ -13,6 +13,7 @@ final class ImageCache: @unchecked Sendable {
     /// Fehlt er, hat der Server noch keine Vorschau gerechnet → `missing`: dann gar nicht erst anfragen (404),
     /// sondern warten, bis eine neuere Zeitleisten-Antwort den Hash liefert (→ `.thumbChanged`).
     private var hashes: [String: String] = [:]
+    private var versions = (UserDefaults.standard.dictionary(forKey: "thumbVersions") as? [String: String]) ?? [:]
     private var missing: Set<String> = []
     private let lock = NSLock()
     func setHash(_ id: String, _ h: String?) {
@@ -48,15 +49,16 @@ final class ImageCache: @unchecked Sendable {
 
     /// Nach dem Bearbeiten: neue Bildfassung erzwingen (bleibt über Neustarts gemerkt).
     func version(_ id: String) -> String? {
-        lock.lock(); let h = hashes[id]; lock.unlock()
-        let v = (UserDefaults.standard.dictionary(forKey: "thumbVersions") as? [String: String])?[id]
+        lock.lock(); let h = hashes[id], v = versions[id]; lock.unlock()
         let parts = [v, h.map { String($0.prefix(10)) }].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: "-")
     }
     func bump(_ id: String) {
-        var d = (UserDefaults.standard.dictionary(forKey: "thumbVersions") as? [String: String]) ?? [:]
-        d[id] = String(Int(Date().timeIntervalSince1970))
-        UserDefaults.standard.set(d, forKey: "thumbVersions")
+        let snapshot = lock.withLock {
+            versions[id] = String(Int(Date().timeIntervalSince1970))
+            return versions
+        }
+        UserDefaults.standard.set(snapshot, forKey: "thumbVersions")
         for s in ["thumbnail", "preview", "fullsize"] { cache.removeObject(forKey: "\(id)-\(s)" as NSString) }
         NotificationCenter.default.post(name: .thumbChanged, object: id)
     }
@@ -82,15 +84,17 @@ final class ImageCache: @unchecked Sendable {
     /// letzte Wartende ab (Kachel weggescrollt), wird auch der Download abgebrochen – wie Apple: Verbindungen
     /// gehören den Kacheln, die man gleich sieht, nicht denen, an denen man vorbeigewischt ist.
     func load(_ id: String, _ size: ImmichClient.Size) async -> UIImage? {
-        if let i = await loadStored(id, size) { return i }
+        guard !Task.isCancelled else { return nil }
         let key = "\(id)-\(size.rawValue)"
-        let task: Task<UIImage?, Never> = lock.withLock {
-            if let e = inflight[key] { inflight[key]!.waiters += 1; return e.task }
+        if let image = get(key) { return image }
+        let entry: (task: Task<UIImage?, Never>, token: UUID) = lock.withLock {
+            if let e = inflight[key] { inflight[key]!.waiters += 1; return (e.task, e.token) }
             let token = UUID()
             let t = Task<UIImage?, Never> { [weak self] in
                 // nur den eigenen Eintrag entfernen (nach einem Abbruch kann schon ein neuer Download laufen)
                 defer { self?.lock.withLock { if self?.inflight[key]?.token == token { self?.inflight.removeValue(forKey: key) } } }
-                guard let url = ImmichClient.shared.thumbnailURL(id, size),
+                if let stored = await self?.loadStored(id, size) { return stored }
+                guard !Task.isCancelled, let url = ImmichClient.shared.thumbnailURL(id, size),
                       let data = try? await ImmichClient.shared.data(url) else { return nil }
                 if let k = self?.kind(size), OfflineSync.enabledFlag { OfflineStore.shared.store(k, id, data) }
                 guard let ready = await Task.detached(priority: .userInitiated, operation: { Self.decode(data) }).value else { return nil }
@@ -98,14 +102,13 @@ final class ImageCache: @unchecked Sendable {
                 return ready
             }
             inflight[key] = (t, 1, token)
-            return t
+            return (t, token)
         }
         return await withTaskCancellationHandler {
-            let r = await task.value
-            return r
+            await entry.task.value
         } onCancel: { [weak self] in
             self?.lock.withLock {
-                guard var e = self?.inflight[key] else { return }
+                guard var e = self?.inflight[key], e.token == entry.token else { return }
                 e.waiters -= 1
                 if e.waiters <= 0 { e.task.cancel(); self?.inflight.removeValue(forKey: key) } else { self?.inflight[key] = e }
             }
@@ -176,6 +179,7 @@ struct AssetThumb: View {
             }
             .task(id: "\(id)\(size.rawValue)\(reload)") {
                 let cache = ImageCache.shared
+                image = nil; blur = nil
                 if let cached = cache.get("\(id)-\(size.rawValue)") { image = cached; return }
                 if size != .thumbnail { image = await cache.loadStored(id, .thumbnail) }
                 if image == nil { blur = cache.placeholder(id) }
@@ -183,6 +187,7 @@ struct AssetThumb: View {
                 if cache.isMissing(id) { return }
                 for attempt in 0..<2 {
                     if let img = await cache.load(id, size) {
+                        guard !Task.isCancelled else { return }
                         withAnimation(.easeOut(duration: 0.15)) { image = img }
                         return
                     }
@@ -288,3 +293,4 @@ struct PersonThumb: View {
 extension Notification.Name {
     static let thumbChanged = Notification.Name("thumbChanged")
 }
+

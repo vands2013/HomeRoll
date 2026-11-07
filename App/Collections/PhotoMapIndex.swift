@@ -113,8 +113,31 @@ struct PhotoMapIndex: Sendable {
                 }
             }
         }
-        return buckets.map { cell, bucket in
+        // Cell centres can fall against opposite sides of a grid boundary. Merge only
+        // the small visible cluster set using cached sums, never the full photo library.
+        let ordered = buckets.sorted {
+            if $0.value.ids.count != $1.value.ids.count { return $0.value.ids.count > $1.value.ids.count }
+            return $0.key.x == $1.key.x ? $0.key.y < $1.key.y : $0.key.x < $1.key.x
+        }
+        var merged: [(cell: Cell, bucket: Bucket)] = []
+        let separation = 78 * unitsPerPoint
+        for (cell, bucket) in ordered {
             let x = bucket.x / Double(bucket.ids.count), y = bucket.y / Double(bucket.ids.count)
+            if let target = merged.firstIndex(where: {
+                let dx = abs($0.bucket.x / Double($0.bucket.ids.count) - x)
+                return min(dx, abs(1 - dx)) < separation &&
+                    abs($0.bucket.y / Double($0.bucket.ids.count) - y) < separation
+            }) {
+                let shift = (merged[target].bucket.x / Double(merged[target].bucket.ids.count) - x).rounded()
+                merged[target].bucket.x += bucket.x + shift * Double(bucket.ids.count)
+                merged[target].bucket.y += bucket.y
+                merged[target].bucket.ids.append(contentsOf: bucket.ids)
+                for (city, n) in bucket.cities { merged[target].bucket.cities[city, default: 0] += n }
+            } else { merged.append((cell, bucket)) }
+        }
+        return merged.map { cell, bucket in
+            let rawX = bucket.x / Double(bucket.ids.count), y = bucket.y / Double(bucket.ids.count)
+            let x = rawX - floor(rawX)
             let city = bucket.cities.sorted {
                 $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value
             }.first?.key
@@ -143,3 +166,4 @@ actor PhotoMapWorker {
     init(index: PhotoMapIndex) { self.index = index }
     func clusters(in viewport: PhotoMapViewport) -> [PhotoMapCluster] { index.clusters(in: viewport) }
 }
+

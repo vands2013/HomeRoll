@@ -9,8 +9,8 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: minimal
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.1.2"
+    CURRENT_PROJECT_VERSION: "2"
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
     SWIFT_EMIT_LOC_STRINGS: YES
@@ -111,3 +111,34 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: org.homeroll.app.widget
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
+
+
+  HomeRollRuntimeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/RuntimeTests
+    dependencies:
+      - target: HomeRoll
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  HomeRollUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/UITests
+    dependencies:
+      - target: HomeRoll
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  HomeRoll:
+    build:
+      targets:
+        HomeRoll: all
+    test:
+      targets:
+        - HomeRollRuntimeTests
+        - HomeRollUITests

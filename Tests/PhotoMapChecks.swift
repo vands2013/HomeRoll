@@ -35,6 +35,12 @@ import Foundation
         precondition(duplicates.clusters(in: world).count == 1)
         precondition(duplicates.clusters(in: world)[0].ids.count == 1000)
 
+        // Nearby photos straddling a grid boundary must not produce overlapping pins.
+        let boundary = PhotoMapIndex(photos: [point("left", 0, -0.0001), point("right", 0, 0.0001)])
+        precondition(boundary.clusters(in: world).count == 1)
+        let wrapped = dateLine.clusters(in: viewport(x: 0.99, y: 0.49, width: 0.02, height: 0.02))
+        precondition(wrapped.count == 1 && abs(wrapped[0].longitude) > 179)
+
         // 85,000 locations spread around the world: preserve all IDs, bound the pin count,
         // and exclude distant locations from a small viewport without losing nearby photos.
         let photos = (0..<85_000).map { i in
@@ -57,3 +63,4 @@ import Foundation
         print("PASS: empty/invalid data, poles, date-line wrapping, stable IDs/covers, coincident photos, and 85,000-location coverage (\(String(format: "%.3f", elapsed))s)")
     }
 }
+

@@ -472,13 +472,11 @@ struct MergePeopleSheet: View {
 /// Karte wie in Fotos: Fotos als Vorschaubilder, je nach Zoomstufe zusammengefasst;
 /// Tippen öffnet das Raster der Fotos an diesem Ort.
 struct MapScreen: View {
+    @Environment(AppModel.self) private var app
     let markers: [MapMarkerDTO]
     @Environment(TimelineStore.self) private var timeline
     @Environment(\.dismiss) private var dismiss
-    @State private var position: MapCameraPosition = .automatic
     @State private var clusters = PhotoMapModel()
-    @State private var mapSize = CGSize(width: 390, height: 844)
-    @State private var initialPositionSet = false
     @State private var satellite = false
     @State private var opened: MapGroup?
 
@@ -492,21 +490,10 @@ struct MapScreen: View {
     }
 
     var body: some View {
-        Map(position: $position) {
-            ForEach(clusters.groups) { g in
-                Annotation("", coordinate: g.coord, anchor: .bottom) {
-                    Button { opened = g } label: { pin(g) }.buttonStyle(.plain)
-                }
-            }
-        }
-        .mapStyle(satellite ? .hybrid(elevation: .flat, pointsOfInterest: .excludingAll)
-                            : .standard(elevation: .flat, pointsOfInterest: .excludingAll))
-        .mapControls { MapCompass() }
-        .onMapCameraChange(frequency: .onEnd) { ctx in clusters.update(rect: ctx.rect, size: mapSize) }
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
-            mapSize = size
-            clusters.resize(size)
-        }
+        PhotoMapCanvas(groups: clusters.groups, home: clusters.home, satellite: satellite,
+                       reload: clusters.reloadID,
+                       onViewport: { rect, size in clusters.update(rect: rect, size: size) },
+                       onSelect: { opened = $0 }, onTiles: { clusters.setTileStatus($0) })
         .ignoresSafeArea()
         .overlay(alignment: .top) {
             HStack {
@@ -527,40 +514,33 @@ struct MapScreen: View {
             .padding(.horizontal, 16)
         }
         .toolbar(.hidden, for: .navigationBar)
-        .task {
-            await clusters.prepare(markers)
-            setInitialPosition()
-        }
-        .onChange(of: markers) { _, value in
-            Task {
-                await clusters.prepare(value)
-                setInitialPosition()
+        .task { await clusters.prepare(markers) }
+        .onAppear { OfflineSync.shared.foregroundMedia("map", active: app.tab == .collections) }
+        .onChange(of: app.tab) { _, tab in OfflineSync.shared.foregroundMedia("map", active: tab == .collections) }
+        .onDisappear { clusters.cancelQuery(); OfflineSync.shared.foregroundMedia("map", active: false) }
+        .onChange(of: markers) { _, value in Task { await clusters.prepare(value) } }
+        .overlay(alignment: .top) {
+            if let message = clusters.tileMessage {
+                VStack(spacing: 8) {
+                    Text(message).font(.footnote).multilineTextAlignment(.center)
+                    HStack(spacing: 24) {
+                        Button("Retry") { clusters.retryTiles() }.accessibilityIdentifier("map.retry")
+                        ShareLink("Diagnostics", item: PerfLog.url)
+                    }
+                }
+                .padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .padding(.horizontal, 20).padding(.top, 80)
             }
+        }
+        .overlay(alignment: .bottomLeading) {
+            #if DEBUG
+            Text(clusters.tileStatus).font(.caption2).padding(8)
+                .accessibilityIdentifier("map.tile-status")
+            #endif
         }
         .navigationDestination(item: $opened) { g in
             AssetGridScreen(title: g.title, subtitle: String(localized: "\(g.ids.count) Objekte"), assets: assets(for: g.ids))
         }
-    }
-
-    private func pin(_ g: MapGroup) -> some View {
-        AssetThumb(id: g.ids[0])
-            .frame(width: 58, height: 58)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(.white, lineWidth: 2.5))
-            .shadow(color: .black.opacity(0.35), radius: 5, y: 2)
-            .overlay(alignment: .topTrailing) {
-                if g.ids.count > 1 {
-                    Text("\(g.ids.count)").font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
-                        .padding(.horizontal, 7).frame(minWidth: 22, minHeight: 22)
-                        .background(Capsule().fill(.blue)).offset(x: 9, y: -9)
-                }
-            }
-    }
-
-    private func setInitialPosition() {
-        guard !initialPositionSet, !markers.isEmpty, let home = clusters.home else { return }
-        initialPositionSet = true
-        position = .region(MKCoordinateRegion(center: home, span: .init(latitudeDelta: 6, longitudeDelta: 6)))
     }
 
     private func assets(for ids: [String]) -> [Asset] {
@@ -568,5 +548,6 @@ struct MapScreen: View {
         return timeline.allLoaded.filter { set.contains($0.id) }
     }
 }
+
 
 

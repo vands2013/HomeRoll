@@ -170,6 +170,11 @@ final class OfflineSync {
     private(set) var note = ""
     /// Beim Scrollen/Zoomen keine Hintergrund-Downloads (Verbindungen und Rechenzeit gehören dann den Kacheln)
     @ObservationIgnored private var busyUntil = Date.distantPast
+    @ObservationIgnored private var foregroundMediaUsers: Set<String> = []
+    func foregroundMedia(_ key: String, active: Bool) {
+        if active { foregroundMediaUsers.insert(key) }
+        else { foregroundMediaUsers.remove(key); kick() }
+    }
     func userBusy(_ on: Bool) { busyUntil = on ? .distantFuture : Date().addingTimeInterval(1) }
     /// Statistik für die Einstellungen (wird beim Laufen nachgeführt)
     private(set) var thumbs = 0
@@ -210,6 +215,10 @@ final class OfflineSync {
 
     private func run(_ t: TimelineStore) async {
         running = true
+        while (!foregroundMediaUsers.isEmpty || Date() < busyUntil), !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        guard !Task.isCancelled else { return }
         await t.loadAll()                     // Offline braucht die ganze Zeitleiste, nicht nur Angesehenes
         let s = OfflineStore.shared
         // Neueste zuerst – das schaut man am häufigsten an
@@ -221,23 +230,24 @@ final class OfflineSync {
             }.value
             if kind == .preview {
                 let limit = previewLimitGB == 0 ? Int.max : previewLimitGB << 30
-                if s.bytes(.preview) >= limit { s.evict(.preview, limit: limit); refreshStats(); continue }
+                if s.bytes(.preview) >= limit { await Task.detached(priority: .utility) { s.evict(.preview, limit: limit) }.value; refreshStats(); continue }
             }
             note = kind == .thumbnail ? String(localized: "Kleine Vorschauen") : String(localized: "Große Vorschauen")
             var i = 0
             while i < todo.count {
-                while Date() < busyUntil, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(300)) }
+                while (!foregroundMediaUsers.isEmpty || Date() < busyUntil), !Task.isCancelled { try? await Task.sleep(for: .milliseconds(300)) }
                 if Task.isCancelled || !enabled || !Connectivity.shared.onWiFi || Connectivity.shared.serverOffline { note = ""; return }
                 if freeSpace() < Self.minFree { note = String(localized: "iPhone-Speicher fast voll – pausiert"); return }
                 if kind == .preview, previewLimitGB > 0, s.bytes(.preview) >= previewLimitGB << 30 { break }
-                let batch = Array(todo[i..<min(todo.count, i + 8)]); i += batch.count
+                let batch = Array(todo[i..<min(todo.count, i + 2)]); i += batch.count
                 await withTaskGroup(of: Void.self) { g in
                     for id in batch { g.addTask { await ImageCache.shared.fetchToStore(id, kind) } }
                 }
-                if i % 200 < 8 { refreshStats() }
+                if i % 200 < 2 { refreshStats() }
             }
             refreshStats()
         }
         note = ""
     }
 }
+

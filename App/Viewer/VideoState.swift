@@ -8,7 +8,13 @@ final class VideoState {
     private(set) var id = ""
     private(set) var player: AVPlayer?
     private(set) var playing = false
-    var muted = false { didSet { player?.isMuted = muted } }
+    var muted = false { didSet {
+        player?.isMuted = muted
+        if playing {
+            if muted { PlaybackAudioSession.release("video") }
+            else { PlaybackAudioSession.activate("video") }
+        }
+    } }
     private(set) var time: Double = 0
     private(set) var duration: Double = 0
     /// Standbilder für den Filmstreifen (vom Server-Video, in kleiner Größe)
@@ -31,8 +37,9 @@ final class VideoState {
         let av = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": ImmichClient.shared.authHeaders])
         let p = AVPlayer(playerItem: AVPlayerItem(asset: av))
         p.isMuted = muted
+        p.volume = 1
         player = p
-        timeObserver = p.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] t in
+        timeObserver = p.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main) { [weak self] t in
             MainActor.assumeIsolated {
                 guard let self, !self.scrubbing else { return }
                 self.time = t.seconds
@@ -50,24 +57,25 @@ final class VideoState {
             self.slowMo = s
             self.duration = (try? await comp.load(.duration).seconds) ?? self.duration
             self.observeEnd(p)
-            if resume { p.play() }
+            if resume { self.play() }
         }
     }
 
     private func observeEnd(_ p: AVPlayer) {
         if let e = endObserver { NotificationCenter.default.removeObserver(e) }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: p.currentItem, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.playing = false }
+            MainActor.assumeIsolated { self?.pause() }
         }
     }
 
     func play() {
         guard let p = player else { return }
+        if !muted { PlaybackAudioSession.activate("video") }
         // am Ende: von vorn (wie Apple)
         if duration > 0, time >= duration - 0.15 { p.seek(to: .zero); time = 0 }
         p.play(); playing = true
     }
-    func pause() { player?.pause(); playing = false }
+    func pause() { player?.pause(); playing = false; PlaybackAudioSession.release("video") }
     func toggle() { playing ? pause() : play() }
 
     func seek(fraction f: Double) {
@@ -103,7 +111,7 @@ final class VideoState {
         let t = pendingSeek ?? time
         pendingSeek = nil
         startSeek(t, exact: true)
-        if resume { player?.play(); playing = true }
+        if resume { play() }
     }
 
     private func startSeek(_ t: Double, exact: Bool) {
@@ -122,6 +130,7 @@ final class VideoState {
 
     func stop() {
         player?.pause()
+        PlaybackAudioSession.release("video")
         if let o = timeObserver { player?.removeTimeObserver(o) }
         if let e = endObserver { NotificationCenter.default.removeObserver(e) }
         timeObserver = nil; endObserver = nil
@@ -134,6 +143,8 @@ final class VideoState {
     private func loadFrames(_ av: AVURLAsset) {
         let want = id, count = 14
         framesTask = Task { [weak self] in
+            // Let playback start before generating fourteen network-backed preview frames.
+            do { try await Task.sleep(for: .milliseconds(600)) } catch { return }
             let gen = AVAssetImageGenerator(asset: av)
             gen.appliesPreferredTrackTransform = true
             gen.maximumSize = CGSize(width: 160, height: 160)
@@ -203,3 +214,4 @@ struct AirPlayButton: UIViewRepresentable {
     }
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
+

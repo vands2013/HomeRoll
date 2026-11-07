@@ -14,7 +14,12 @@ struct FotosApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
+                #if DEBUG
+                if ProcessInfo.processInfo.environment["FOTOS_MAP_DEMO"] == "1" { MapPerfDemo() }
+                else if app.loggedIn { RootView() } else { LoginView() }
+                #else
                 if app.loggedIn { RootView() } else { LoginView() }
+                #endif
             }
             .environment(app)
             .environment(timeline)
@@ -151,3 +156,4 @@ final class AppModel {
         viewer = ViewerRequest(assets: list, index: i)
     }
 }
+

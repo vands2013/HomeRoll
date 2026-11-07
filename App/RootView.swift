@@ -5,15 +5,22 @@ struct RootView: View {
     @Environment(TimelineStore.self) private var timeline
     @Namespace private var zoom
     @Environment(\.scenePhase) private var phase
+    @State private var collectionsCreated = false
 
     var body: some View {
         @Bindable var app = app
         ZStack(alignment: .bottom) {
             Color.black.ignoresSafeArea()
-            Group {
-                switch app.tab {
-                case .library: LibraryView()
-                case .collections: CollectionsView()
+            ZStack {
+                LibraryView()
+                    .opacity(app.tab == .library ? 1 : 0)
+                    .allowsHitTesting(app.tab == .library)
+                    .accessibilityHidden(app.tab != .library)
+                if collectionsCreated || app.tab == .collections {
+                    CollectionsView()
+                        .opacity(app.tab == .collections ? 1 : 0)
+                        .allowsHitTesting(app.tab == .collections)
+                        .accessibilityHidden(app.tab != .collections)
                 }
             }
             .environment(\.zoomNamespace, zoom)
@@ -43,7 +50,13 @@ struct RootView: View {
             if ProcessInfo.processInfo.environment["FOTOS_BACKUP_NOW"] != nil { BackupEngine.shared.start() }
             #endif
         }
-        .onChange(of: app.tab) { app.endSelection(); app.tabsExpanded = false }
+        .onChange(of: app.tab, initial: true) { _, tab in
+            if tab == .collections { collectionsCreated = true }
+            app.endSelection(); app.tabsExpanded = false
+        }
+        .onChange(of: app.viewer != nil || app.memory != nil, initial: true) { _, active in
+            OfflineSync.shared.foregroundMedia("viewer", active: active)
+        }
         .onChange(of: perfScreen, initial: true) { _, s in PerfLog.setScreen(s) }
         .onChange(of: phase) { _, p in
             // erst nachladen, wenn das Konto feststeht (beim Start erledigt das .task)
@@ -312,3 +325,4 @@ extension Notification.Name {
     static let openFotosURL = Notification.Name("openFotosURL")
     static let personThumbChanged = Notification.Name("personThumbChanged")
 }
+
