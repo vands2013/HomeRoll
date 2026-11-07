@@ -10,6 +10,9 @@ final class MapUITests: XCTestCase {
         XCTAssertTrue(mute.waitForExistence(timeout: 20))
         XCTAssertGreaterThan(mute.frame.midY, app.frame.height / 2)
         XCTAssertTrue(app.sliders["viewer.video-progress"].exists)
+        let oldMuteLabel = mute.label
+        mute.tap()
+        XCTAssertNotEqual(mute.label, oldMuteLabel)
         let header = app.descendants(matching: .any)["viewer.date-header"].firstMatch
         XCTAssertTrue(header.exists)
         XCTAssertEqual(header.frame.midX, app.frame.midX, accuracy: 8)
@@ -37,7 +40,7 @@ final class MapUITests: XCTestCase {
         map.swipeRight()
         map.rotate(.pi / 3, withVelocity: 1)
         XCTAssertTrue(map.exists)
-        let compass = app.buttons["map.compass"]
+        let compass = app.buttons["Compass"]
         if compass.waitForExistence(timeout: 5) {
             XCTAssertGreaterThan(compass.frame.minY, 110)
         } else { XCTFail("Rotated map must expose the compass") }

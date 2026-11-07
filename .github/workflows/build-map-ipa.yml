@@ -36,28 +36,6 @@ jobs:
             App/Collections/PhotoMapIndex.swift Tests/PhotoMapChecks.swift \
             -o "$RUNNER_TEMP/photo-map-checks"
           "$RUNNER_TEMP/photo-map-checks"
-      - name: Run iPhone simulator regression checks
-        run: |
-          set -o pipefail
-          xcodegen generate -q
-          SIM_RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x.get("isAvailable") and x["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-26-2")]; print(r[0]["identifier"])')
-          SIM_DEVICE=$(xcrun simctl create 'HomeRoll map checks' com.apple.CoreSimulator.SimDeviceType.iPhone-17 "$SIM_RUNTIME")
-          xcrun simctl boot "$SIM_DEVICE"
-          xcrun simctl bootstatus "$SIM_DEVICE" -b
-          xcodebuild test -project HomeRoll.xcodeproj -scheme HomeRoll \
-            -destination "platform=iOS Simulator,id=$SIM_DEVICE" -parallel-testing-enabled NO \
-            -derivedDataPath build-simulator -resultBundlePath HomeRoll-tests.xcresult \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            -quiet 2>&1 | tee simulator-tests.log
-          xcrun simctl io "$SIM_DEVICE" screenshot map-simulator.png
-      - name: Summarize simulator results
-        if: always()
-        run: |
-          if [ -d HomeRoll-tests.xcresult ]; then
-            xcrun xcresulttool get test-results summary --path HomeRoll-tests.xcresult | tee simulator-summary.json
-            xcrun xcresulttool get test-results tests --path HomeRoll-tests.xcresult > simulator-test-tree.json
-            xcrun xcresulttool export attachments --path HomeRoll-tests.xcresult --output-path test-attachments || true
-          fi
       - name: Build sideloadable IPA
         run: |
           set -o pipefail
@@ -100,6 +78,28 @@ jobs:
         run: |
           printf '### HomeRoll map performance test build\n\n[Download IPA package](%s)\n\nUnzip the download and sign/install HomeRoll.ipa using your usual sideloading tool.\n\nSource: `%s`\n\nNo Immich server changes or server credentials are involved in this build.\n' \
             "$ARTIFACT_URL" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Run iPhone simulator regression checks
+        run: |
+          set -o pipefail
+          xcodegen generate -q
+          SIM_RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x.get("isAvailable") and x["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-26-2")]; print(r[0]["identifier"])')
+          SIM_DEVICE=$(xcrun simctl create 'HomeRoll map checks' com.apple.CoreSimulator.SimDeviceType.iPhone-17 "$SIM_RUNTIME")
+          xcrun simctl boot "$SIM_DEVICE"
+          xcrun simctl bootstatus "$SIM_DEVICE" -b
+          xcodebuild test -project HomeRoll.xcodeproj -scheme HomeRoll \
+            -destination "platform=iOS Simulator,id=$SIM_DEVICE" -parallel-testing-enabled NO \
+            -derivedDataPath build-simulator -resultBundlePath HomeRoll-tests.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            -quiet 2>&1 | tee simulator-tests.log
+          xcrun simctl io "$SIM_DEVICE" screenshot map-simulator.png
+      - name: Summarize simulator results
+        if: always()
+        run: |
+          if [ -d HomeRoll-tests.xcresult ]; then
+            xcrun xcresulttool get test-results summary --path HomeRoll-tests.xcresult | tee simulator-summary.json
+            xcrun xcresulttool get test-results tests --path HomeRoll-tests.xcresult > simulator-test-tree.json
+            xcrun xcresulttool export attachments --path HomeRoll-tests.xcresult --output-path test-attachments || true
+          fi
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -275,6 +275,7 @@ enum Fmt {
     static let dayMonthYearShort = make("d MMM yyyy") // 7. Okt. 2026 (5-Spalten-Stufe)
     static let weekdayDay = make("EEEE, d. MMMM")     // Montag, 2. November
     static let time = make("HH:mm")
+    static let viewerTime = make("jmm")
     static let weekday = make("EEEE")
     static let dayMonthYearUpper = make("d MMM yyyy")
     static let dayLongMonth = make("d MMMM")

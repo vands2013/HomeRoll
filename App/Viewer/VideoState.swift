@@ -186,7 +186,6 @@ struct VideoControls: View {
         .padding(.horizontal, 8)
         .glassEffect(.regular, in: .capsule)
         .padding(.horizontal, 20)
-        .accessibilityIdentifier("viewer.video-controls")
     }
 }
 

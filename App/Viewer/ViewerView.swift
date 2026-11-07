@@ -118,7 +118,7 @@ struct ViewerView: View {
             Spacer()
             VStack(spacing: 1) {
                 Text(Fmt.relativeDay(a.date, fallback: Calendar.wall.component(.year, from: a.date) == Calendar.wall.component(.year, from: Date()) ? Fmt.dayLongMonth : Fmt.dayLongMonthYear)).font(.system(size: 16, weight: .semibold))
-                Text(Fmt.time.string(from: a.date))
+                Text(Fmt.viewerTime.string(from: a.date))
                     .font(.system(size: 12)).opacity(0.8)
             }
             .foregroundStyle(.white)
