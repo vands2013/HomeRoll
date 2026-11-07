@@ -115,6 +115,10 @@ struct CollectionsView: View {
                 .padding(.bottom, 120)
             }
             .scrollIndicators(.hidden)
+            .onScrollPhaseChange { _, phase in
+                OfflineSync.shared.foregroundMedia("collections-scroll", active: phase != .idle)
+            }
+            .onDisappear { OfflineSync.shared.foregroundMedia("collections-scroll", active: false) }
             .background(Color.black)
             .overlay(alignment: .top) {
                 header.padding(.bottom, 26).background(alignment: .top) { TopBlur() }
@@ -140,6 +144,9 @@ struct CollectionsView: View {
             guard let r else { return }
             app.pendingRoute = nil
             path = NavigationPath(); path.append(r)
+        }
+        .onChange(of: app.tab) { _, tab in
+            if tab != .collections { OfflineSync.shared.foregroundMedia("collections-scroll", active: false) }
         }
         .onChange(of: timeline.totalCount) { Task { await memories.rebuild(timeline: timeline, server: model.memories) } }
         .task(id: timeline.version) { await rebuildDerived() }
@@ -391,13 +398,17 @@ struct CollectionsView: View {
 
     /// Letzte Tage und Reisen kosten bei 80 000 Objekten spürbar → nur bei neuer Zeitleisten-Version, im Hintergrund.
     private func rebuildDerived() async {
+        // Coalesce bursts of month updates; cancelled view tasks must also cancel CPU work.
+        do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+        guard await OfflineSync.shared.waitForForegroundIdle(), !Task.isCancelled else { return }
         let all = timeline.allLoaded
-        let (days, t) = await Task.detached(priority: .userInitiated) { () -> ([DayGroup], [Trip]) in
+        let worker = Task.detached(priority: .utility) { () -> ([DayGroup], [Trip]) in
             let tail = all.suffix(5000)   // die letzten 10 Tage stecken sicher in den neuesten Objekten
             let g = Dictionary(grouping: tail) { Calendar.wall.startOfDay(for: $0.date) }
             let days = g.keys.sorted(by: >).prefix(10).map { DayGroup(day: $0, assets: g[$0]!) }
             return (days, CollectionsView.trips(from: all))
-        }.value
+        }
+        let (days, t) = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
         guard !Task.isCancelled else { return }
         recentDays = days; trips = t
         for d in days where dayCovers[d.day] == nil {
@@ -425,8 +436,9 @@ struct CollectionsView: View {
 
     /// Reisen = zusammenhängende Tage außerhalb des Heimatlandes (häufigstes Land).
     nonisolated static func trips(from input: [Asset]) -> [Trip] {
+        guard !Task.isCancelled else { return [] }
         let all = input.filter { $0.country != nil }
-        guard !all.isEmpty else { return [] }
+        guard !all.isEmpty, !Task.isCancelled else { return [] }
         let home = Dictionary(grouping: all, by: { $0.country! }).max { $0.value.count < $1.value.count }?.key
         var out: [Trip] = []
         var cur: [Asset] = []
@@ -437,7 +449,8 @@ struct CollectionsView: View {
             out.append(Trip(title: Self.countryDE(country) ?? place ?? String(localized: "Reise"), start: f.date, end: l.date, assets: cur))
             cur = []
         }
-        for a in all.sorted(by: { $0.date < $1.date }) {
+        for (i, a) in all.sorted(by: { $0.date < $1.date }).enumerated() {
+            if i & 1023 == 0, Task.isCancelled { return [] }
             if a.country == home { flush(); continue }
             if let last = cur.last, a.date.timeIntervalSince(last.date) > 4 * 86400 || a.country != last.country { flush() }
             cur.append(a)

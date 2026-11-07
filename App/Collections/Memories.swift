@@ -204,8 +204,17 @@ final class MemoryCenter {
         skip.formUnion(await SensitiveFilter.ids())
         let serverSets = server.map { ($0.data.year, $0.assets.map(\.asset).filter { !skip.contains($0.id) }) }
         let prefs = MemoryPrefs.shared
-        let pool = all.filter { !skip.contains($0.id) }
-        let built = await Task.detached(priority: .utility) { MemoryEngine.build(all: pool, server: serverSets, prefs: prefs) }.value
+        let excluded = skip
+        let worker = Task.detached(priority: .utility) {
+            let pool = all.filter { !excluded.contains($0.id) }
+            guard !Task.isCancelled else { return [Memory]() }
+            return MemoryEngine.build(all: pool, server: serverSets, prefs: prefs)
+        }
+        let built = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+        if Task.isCancelled {
+            if gen == generation { builtFor = "" }
+            return
+        }
         guard gen == generation else { return }   // inzwischen Konto gewechselt oder neuer Aufbau
         // schon bekannte heikle Fotos fehlen sofort (nicht erst nach der Prüfung sichtbar)
         var shown = Self.without(SensitiveFilter.known(built.flatMap { [$0.key.id] + $0.assets.map(\.id) }, account: account), built)
