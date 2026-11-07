@@ -481,7 +481,7 @@ struct MonthsList: View {
             .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in userBrowsing = true })
             .environment(\.defaultMinListRowHeight, 0)
             .ignoresSafeArea(edges: .top)
-            .task {
+            .task(id: timeline.buckets.count) {
                 if let t = app.scrollTarget {
                     app.scrollTarget = nil
                     if let i = timeline.buckets.firstIndex(where: { $0.timeBucket == t }) { visibleStart = max(0, i - 5) }
@@ -493,7 +493,7 @@ struct MonthsList: View {
                     }
                     return
                 }
-                guard !timeline.buckets.isEmpty else { return }
+                guard !timeline.buckets.isEmpty, !userBrowsing else { return }
                 userBrowsing = false
                 visibleStart = max(0, timeline.buckets.count - 10)
                 for b in timeline.buckets.suffix(2) { await timeline.load(b.timeBucket) }

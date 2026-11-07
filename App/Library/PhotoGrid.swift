@@ -62,7 +62,9 @@ final class GridCollectionView: UICollectionView {
             fastThumb.backgroundColor = UIColor.white.withAlphaComponent(0.8)
             fastThumb.layer.cornerRadius = 3
             fastScroll.addSubview(fastThumb)
-            fastScroll.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragFastScroll(_:))))
+            let drag = UIPanGestureRecognizer(target: self, action: #selector(dragFastScroll(_:)))
+            fastScroll.addGestureRecognizer(drag)
+            panGestureRecognizer.require(toFail: drag)
             addSubview(fastScroll)
         }
         let top = max(contentInset.top + 115, 140.0)
