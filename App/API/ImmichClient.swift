@@ -213,6 +213,29 @@ final class ImmichClient: NSObject, URLSessionDelegate, @unchecked Sendable {
         var f = f; f["visibility"] = ["eq": "timeline"]; return f
     }
 
+    /// Search one page. The mobile-compatible smart API uses page numbers; the
+    /// newer metadata API uses cursors. Filtered smart search has no cursor.
+    @MainActor func searchPage(query: String, filter: [String: Any], cursor: String? = nil, page: Int? = nil) async throws -> SearchResponseDTO.Page {
+        let smart = !query.isEmpty
+        let legacySmart = smart && filter.isEmpty
+        var body: [String: Any] = ["size": smart && !legacySmart ? 1000 : 100, "withExif": true]
+        if smart {
+            body["query"] = query
+            if legacySmart {
+                body["visibility"] = "timeline"
+                if let page { body["page"] = page }
+            } else {
+                body["filter"] = Self.visible(filter)
+            }
+        } else {
+            body["filter"] = Self.visible(filter)
+            body["orderBy"] = ["field": "fileCreatedAt", "direction": "desc"]
+            if let cursor { body["cursor"] = cursor }
+        }
+        let response: SearchResponseDTO = try await request(smart ? "search/smart" : "search/metadata", method: "POST", body: json(body))
+        return response.assets
+    }
+
     /// KI-Suche (mehrsprachiges Bild-Text-Modell auf dem Server); optional mit zusätzlichem Filter.
     @MainActor func smartSearch(_ query: String, filter: [String: Any] = [:], size: Int = 120) async throws -> [AssetDTO] {
         let body: [String: Any] = ["query": query, "size": size, "withExif": true, "filter": Self.visible(filter)]
@@ -510,3 +533,4 @@ final class ImmichClient: NSObject, URLSessionDelegate, @unchecked Sendable {
 extension Notification.Name {
     static let sessionExpired = Notification.Name("sessionExpired")
 }
+

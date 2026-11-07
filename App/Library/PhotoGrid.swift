@@ -49,8 +49,45 @@ final class GridController {
 /// Führt einen gemerkten Sprung erst aus, wenn Breite und Inhalt da sind.
 final class GridCollectionView: UICollectionView {
     var pending: (Int, UnitPoint)?
+    var fastScrollEnabled = false
+    private let fastScroll = UIView()
+    private let fastThumb = UIView()
+    private var fastScrollInstalled = false
+
+    func updateFastScroll() {
+        guard fastScrollEnabled else { fastScroll.isHidden = true; return }
+        if !fastScrollInstalled {
+            fastScrollInstalled = true
+            fastScroll.backgroundColor = .clear
+            fastThumb.backgroundColor = UIColor.white.withAlphaComponent(0.8)
+            fastThumb.layer.cornerRadius = 3
+            fastScroll.addSubview(fastThumb)
+            fastScroll.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragFastScroll(_:))))
+            addSubview(fastScroll)
+        }
+        let top = max(contentInset.top + 115, 140.0)
+        let height = max(0, bounds.height - top - contentInset.bottom - 10)
+        let range = max(0, contentSize.height + contentInset.top + contentInset.bottom - bounds.height)
+        fastScroll.isHidden = range <= 0 || height < 30
+        let thumbHeight = min(height, max(40, height * bounds.height / max(bounds.height, contentSize.height)))
+        let progress = min(1, max(0, (contentOffset.y + contentInset.top) / max(1, range)))
+        fastScroll.frame = CGRect(x: bounds.width - 32, y: contentOffset.y + top, width: 32, height: height)
+        fastThumb.frame = CGRect(x: 20, y: progress * (height - thumbHeight), width: 6, height: thumbHeight)
+        bringSubviewToFront(fastScroll)
+    }
+
+    @objc private func dragFastScroll(_ gesture: UIPanGestureRecognizer) {
+        let height = fastScroll.bounds.height
+        let travel = height - fastThumb.bounds.height
+        guard travel > 0 else { return }
+        let y = gesture.location(in: fastScroll).y - fastThumb.bounds.height / 2
+        let progress = min(1, max(0, y / travel))
+        let range = max(0, contentSize.height + contentInset.top + contentInset.bottom - bounds.height)
+        setContentOffset(CGPoint(x: contentOffset.x, y: -contentInset.top + progress * range), animated: false)
+    }
     override func layoutSubviews() {
         super.layoutSubviews()
+        updateFastScroll()
         guard let (index, anchor) = pending, bounds.width > 0 else { return }
         let n = numberOfItems(inSection: 0)
         guard n > 0 else { return }
@@ -340,6 +377,7 @@ struct PhotoGrid: UIViewRepresentable {
     var autoplay = true
     /// Neueste oben (Sammlungen): beim Öffnen oben statt beim Neuesten unten beginnen
     var startAtTop = false
+    var showsFastScroll = false
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -347,7 +385,8 @@ struct PhotoGrid: UIViewRepresentable {
         let layout = GridLayout()
         let v = GridCollectionView(frame: .zero, collectionViewLayout: layout)
         v.backgroundColor = .clear
-        v.showsVerticalScrollIndicator = true
+        v.fastScrollEnabled = showsFastScroll
+        v.showsVerticalScrollIndicator = !showsFastScroll
         v.contentInsetAdjustmentBehavior = .never
         v.alwaysBounceVertical = true
         let c = context.coordinator
@@ -693,6 +732,7 @@ struct PhotoGrid: UIViewRepresentable {
         }
 
         func scrollViewDidScroll(_ sv: UIScrollView) {
+            view?.updateFastScroll()
             guard let i = topIndex(), i != lastTop else { return }
             lastTop = i; parent.onTop(i)
         }

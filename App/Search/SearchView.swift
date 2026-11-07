@@ -44,6 +44,11 @@ struct SearchView: View {
     @State private var searching = false
     @State private var result = SearchResult()
     @State private var resultKey = ""
+    @State private var nextCursor: String?
+    @State private var nextPage: Int?
+    @State private var pageLoading = false
+    @State private var searchError: String?
+    @State private var currentPlan: SearchPlan?
     @State private var cities: [AssetDTO] = []
     @State private var people: [PersonDTO] = []
     @State private var countries: [String] = []
@@ -319,7 +324,16 @@ struct SearchView: View {
                     if !result.text.isEmpty { heading(String(localized: "Weitere Fotos")) }
                     grid(result.photos, all: photos)
                 }
-                if photos.isEmpty && resultKey == key && !searching {
+                if resultKey == key, let searchError {
+                    Text(searchError).foregroundStyle(.secondary).padding()
+                    Button("Retry") { Task { if result.photos.isEmpty { await run() } else { await loadMore() } } }
+                } else if resultKey == key && (nextCursor != nil || nextPage != nil) {
+                    Button { Task { await loadMore() } } label: {
+                        if pageLoading { ProgressView().tint(.white) }
+                        else { Text("Load more results") }
+                    }.disabled(pageLoading).padding()
+                }
+                if photos.isEmpty && resultKey == key && !searching && searchError == nil && nextCursor == nil && nextPage == nil {
                     ContentUnavailableView(String(localized: "Keine Treffer"), systemImage: "magnifyingglass",
                                            description: Text(String(localized: "Probier einen anderen Begriff oder entferne ein Kärtchen.")))
                         .padding(.top, 60)
@@ -427,27 +441,58 @@ struct SearchView: View {
 
     // MARK: Suchlogik
 
-    private func run() async {
-        let k = key
-        searching = true
-        defer { searching = false }
-        var plan = SearchPlan()
-        plan.freeText = trimmed
-        await plan.apply(tokens)
-        var r = await plan.execute(smart: trimmed.count >= 3 || plan.freeText.count >= 3)
-        // Kartenort: nur Fotos im Umkreis (Immich-Suche kennt keinen Umkreis → über die Kartenpunkte)
+    private func areaFiltered(_ assets: [Asset], tokens: [SearchToken]) -> [Asset] {
+        var items = assets
         for case .area(_, let lat, let lon, let km) in tokens {
             let near = Set(markers.filter { PlaceCompleter.distanceKm(lat, lon, $0.lat, $0.lon) <= km }.map(\.id))
-            if plan.filter.isEmpty && plan.freeText.isEmpty && tokens.count == 1 {
-                await timeline.loadAll()
-                r.photos = timeline.allLoaded.filter { near.contains($0.id) }
-                r.text = []
-            } else {
-                r.photos = r.photos.filter { near.contains($0.id) }; r.text = r.text.filter { near.contains($0.id) }
-            }
+            items = items.filter { near.contains($0.id) }
         }
-        guard k == key else { return }   // inzwischen weitergetippt
-        result = r; resultKey = k
+        return items
+    }
+
+    private func run() async {
+        let k = key
+        let activeTokens = tokens
+        searching = true
+        nextCursor = nil; nextPage = nil; searchError = nil; currentPlan = nil
+        var plan = SearchPlan()
+        plan.freeText = trimmed
+        await plan.apply(activeTokens)
+        guard k == key, !Task.isCancelled else { return }
+        do {
+            let page = try await ImmichClient.shared.searchPage(query: plan.freeText, filter: plan.filter)
+            guard k == key, !Task.isCancelled else { return }
+            result = SearchResult(labels: plan.labels, photos: areaFiltered(page.items.map(\.asset), tokens: activeTokens))
+            resultKey = k; currentPlan = plan
+            nextCursor = page.nextCursor
+            nextPage = page.nextPage.flatMap(Int.init)
+            searching = false
+        } catch {
+            guard k == key, !Task.isCancelled else { return }
+            result = SearchResult(); resultKey = k; searching = false
+            searchError = error.localizedDescription
+        }
+    }
+
+    private func loadMore() async {
+        guard !pageLoading, resultKey == key, let plan = currentPlan,
+              nextCursor != nil || nextPage != nil else { return }
+        let k = key, cursor = nextCursor, pageNumber = nextPage, activeTokens = tokens
+        pageLoading = true; searchError = nil
+        defer { pageLoading = false }
+        do {
+            let page = try await ImmichClient.shared.searchPage(query: plan.freeText, filter: plan.filter, cursor: cursor, page: pageNumber)
+            guard k == key else { return }
+            var seen = Set(result.photos.map(\.id))
+            let items = areaFiltered(page.items.map(\.asset), tokens: activeTokens).filter { seen.insert($0.id).inserted }
+            result.photos.append(contentsOf: items)
+            nextCursor = page.nextCursor == cursor ? nil : page.nextCursor
+            let newPage = page.nextPage.flatMap(Int.init)
+            nextPage = newPage == pageNumber ? nil : newPage
+        } catch {
+            guard k == key else { return }
+            searchError = error.localizedDescription
+        }
     }
 }
 
