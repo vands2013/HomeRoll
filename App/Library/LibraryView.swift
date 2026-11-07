@@ -454,6 +454,7 @@ struct MonthsList: View {
     @Environment(AppModel.self) private var app
     @Environment(TimelineStore.self) private var timeline
     @State private var visibleStart = Int.max
+    @State private var userBrowsing = false
 
     /// List (UICollectionView darunter) statt LazyVStack: springt auch bei 116 unterschiedlich hohen Monaten genau
     /// (LazyVStack verschätzte sich → schwarzer Schirm nach „Jahr antippen“). Jeder Tag ist eine eigene Zeile.
@@ -464,7 +465,7 @@ struct MonthsList: View {
                 ForEach(Array(timeline.buckets.dropFirst(min(visibleStart, timeline.buckets.count)))) { b in
                     MonthHeader(bucket: b).id(b.timeBucket).plainRow()
                         .onAppear {
-                            if visibleStart > 0, timeline.buckets.indices.contains(visibleStart), timeline.buckets[visibleStart].id == b.id {
+                            if userBrowsing, visibleStart > 0, timeline.buckets.indices.contains(visibleStart), timeline.buckets[visibleStart].id == b.id {
                                 visibleStart = max(0, visibleStart - 10)
                             }
                         }
@@ -475,6 +476,7 @@ struct MonthsList: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .scrollIndicators(.visible)
+            .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in userBrowsing = true })
             .environment(\.defaultMinListRowHeight, 0)
             .ignoresSafeArea(edges: .top)
             .task {
@@ -490,6 +492,7 @@ struct MonthsList: View {
                     return
                 }
                 guard !timeline.buckets.isEmpty else { return }
+                userBrowsing = false
                 visibleStart = max(0, timeline.buckets.count - 10)
                 for b in timeline.buckets.suffix(2) { await timeline.load(b.timeBucket) }
                 try? await Task.sleep(for: .milliseconds(50))
