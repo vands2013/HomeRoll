@@ -431,8 +431,8 @@ struct SearchView: View {
         let k = key
         searching = true
         defer { searching = false }
-        var plan = await SearchPlan.make(trimmed, cities: cities.compactMap { $0.exifInfo?.city }, people: people, forced: nil,
-                                         countries: countries)
+        var plan = SearchPlan()
+        plan.freeText = trimmed
         await plan.apply(tokens)
         var r = await plan.execute(smart: trimmed.count >= 3 || plan.freeText.count >= 3)
         // Kartenort: nur Fotos im Umkreis (Immich-Suche kennt keinen Umkreis → über die Kartenpunkte)
@@ -563,18 +563,7 @@ struct SearchPlan {
             r.photos = ((try? await api.search(filter: filter, size: 2000)) ?? []).map(\.asset)
             return r
         }
-        var ocrFilter = filter; ocrFilter["ocr"] = ["matches": freeText]
-        r.text = ((try? await api.search(filter: ocrFilter, size: 60)) ?? []).map(\.asset)
-        let seen = Set(r.text.map(\.id))
-        guard smart else { return r }
-        // Die KI-Suche sortiert nach Ähnlichkeit und liefert immer etwas – bei Text-Treffern nur die nächsten zeigen.
-        let found = ((try? await api.smartSearch(freeText, filter: filter, size: 200)) ?? []).map(\.asset)
-        // Nur echte Treffer zeigen (wie Apple „Keine Treffer“), Dienst weg → wie bisher begrenzt
-        if let keep = await api.relevant(freeText, ids: found.map(\.id)) {
-            r.photos = found.filter { keep.contains($0.id) && !seen.contains($0.id) }
-        } else {
-            r.photos = Array(found.filter { !seen.contains($0.id) }.prefix(r.text.isEmpty ? 150 : 30))
-        }
+        r.photos = ((try? await api.smartSearch(freeText, filter: filter, size: 100)) ?? []).map(\.asset)
         return r
     }
 }
@@ -686,3 +675,4 @@ final class PlaceCompleter: NSObject, MKLocalSearchCompleterDelegate {
         return sqrt(x * x + y * y) * r
     }
 }
+

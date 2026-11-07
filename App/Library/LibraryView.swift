@@ -453,6 +453,7 @@ struct MonthsList: View {
     @Binding var subtitle: String
     @Environment(AppModel.self) private var app
     @Environment(TimelineStore.self) private var timeline
+    @State private var visibleStart = Int.max
 
     /// List (UICollectionView darunter) statt LazyVStack: springt auch bei 116 unterschiedlich hohen Monaten genau
     /// (LazyVStack verschätzte sich → schwarzer Schirm nach „Jahr antippen“). Jeder Tag ist eine eigene Zeile.
@@ -460,8 +461,13 @@ struct MonthsList: View {
         ScrollViewReader { proxy in
             List {
                 Color.clear.frame(height: 110).plainRow()
-                ForEach(timeline.buckets) { b in
+                ForEach(Array(timeline.buckets.dropFirst(min(visibleStart, timeline.buckets.count)))) { b in
                     MonthHeader(bucket: b).id(b.timeBucket).plainRow()
+                        .onAppear {
+                            if visibleStart > 0, timeline.buckets.indices.contains(visibleStart), timeline.buckets[visibleStart].id == b.id {
+                                visibleStart = max(0, visibleStart - 10)
+                            }
+                        }
                     MonthDays(bucket: b, subtitle: $subtitle)
                 }
                 Color.clear.frame(height: 100).id("ende").plainRow()
@@ -474,6 +480,7 @@ struct MonthsList: View {
             .task {
                 if let t = app.scrollTarget {
                     app.scrollTarget = nil
+                    if let i = timeline.buckets.firstIndex(where: { $0.timeBucket == t }) { visibleStart = max(0, i - 5) }
                     await timeline.load(t)
                     try? await Task.sleep(for: .milliseconds(50))
                     proxy.scrollTo(t, anchor: .top)
@@ -483,6 +490,7 @@ struct MonthsList: View {
                     return
                 }
                 guard !timeline.buckets.isEmpty else { return }
+                visibleStart = max(0, timeline.buckets.count - 10)
                 for b in timeline.buckets.suffix(2) { await timeline.load(b.timeBucket) }
                 try? await Task.sleep(for: .milliseconds(50))
                 proxy.scrollTo("ende", anchor: .bottom)
