@@ -124,8 +124,10 @@ struct PhotoMapCanvas: UIViewRepresentable {
 
         func publishViewport(_ map: MKMapView) {
             let rect = map.visibleMapRect, size = map.bounds.size
+            let moved = lastRect?.origin.x != rect.origin.x || lastRect?.origin.y != rect.origin.y ||
+                lastRect?.size.width != rect.size.width || lastRect?.size.height != rect.size.height
             guard size.width > 0, size.height > 0, !rect.isNull,
-                  lastRect != rect || lastSize != size else { return }
+                  moved || lastSize != size else { return }
             lastRect = rect; lastSize = size
             // Layout/delegate callbacks must not mutate SwiftUI state in updateUIView.
             Task { @MainActor [weak self] in self?.parent.onViewport(rect, size) }

@@ -148,6 +148,7 @@ enum TextHeavy {
     @MainActor private static var known: [String: Bool] = [:]
     @MainActor static func check(_ a: Asset) async -> Bool {
         if let k = known[a.id] { return k }
+        guard await OfflineSync.shared.waitForForegroundIdle() else { return true }
         // ohne Vorschau (Server rechnet noch) nicht nehmen – sonst bleibt die Kachel leer; nicht merken, kommt später
         guard let img = await ImageCache.shared.load(a.id, .preview), let cg = img.cgImage else { return true }
         let heavy = await Task.detached(priority: .utility) { () -> Bool in
@@ -186,6 +187,7 @@ final class MemoryCenter {
     func rebuild(timeline: TimelineStore, server: [MemoryDTO], force: Bool = false) async {
         let all = timeline.allLoaded
         let account = timeline.account
+        guard await OfflineSync.shared.waitForForegroundIdle(), timeline.account == account else { return }
         // anderes Konto: alte Rückblicke sofort weg (sonst zeigt das neue Konto Fotos des vorigen)
         if account != builtAccount { items = []; settled = false; builtAccount = account; builtFor = ""; generation += 1 }
         let stamp = "\(account)-\(all.count)-\(server.count)-\(MemoryPrefs.shared.custom.count)"
@@ -889,3 +891,4 @@ enum MemoryRecent {
         UserDefaults.standard.set(Array(l.prefix(30)), forKey: "recentMemories")
     }
 }
+

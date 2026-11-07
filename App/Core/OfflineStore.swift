@@ -74,7 +74,7 @@ final class OfflineStore: @unchecked Sendable {
         lock.lock()
         let old = keys[kind]?[id]
         keys[kind, default: [:]][id] = n
-        sizes[kind, default: 0] += d.count
+        if old != n { sizes[kind, default: 0] += d.count }
         lock.unlock()
         if let old, old != n {
             let ou = url(kind, old)
@@ -171,6 +171,13 @@ final class OfflineSync {
     /// Beim Scrollen/Zoomen keine Hintergrund-Downloads (Verbindungen und Rechenzeit gehören dann den Kacheln)
     @ObservationIgnored private var busyUntil = Date.distantPast
     @ObservationIgnored private var foregroundMediaUsers: Set<String> = []
+    /// Background OCR/curation yields to map gestures and foreground media too.
+    func waitForForegroundIdle() async -> Bool {
+        while (!foregroundMediaUsers.isEmpty || Date() < busyUntil), !Task.isCancelled {
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return false }
+        }
+        return !Task.isCancelled
+    }
     func foregroundMedia(_ key: String, active: Bool) {
         if active { foregroundMediaUsers.insert(key) }
         else { foregroundMediaUsers.remove(key); kick() }
@@ -184,6 +191,7 @@ final class OfflineSync {
     private(set) var total = 0
     @ObservationIgnored weak var timeline: TimelineStore?
     @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var taskID: UUID?
     /// iPhone muss mindestens so viel frei behalten
     static let minFree: Int64 = 10 << 30
 
@@ -198,9 +206,15 @@ final class OfflineSync {
     func kick() {
         guard enabled, Connectivity.shared.onWiFi, !Connectivity.shared.serverOffline, task == nil,
               let t = timeline, !t.allLoaded.isEmpty, !t.restoring, OfflineStore.shared.ready else { return }
-        task = Task { await run(t); task = nil; running = false }
+        let id = UUID()
+        taskID = id
+        task = Task {
+            await run(t)
+            guard taskID == id else { return }
+            task = nil; taskID = nil; running = false
+        }
     }
-    func stop() { task?.cancel(); task = nil; running = false }
+    func stop() { task?.cancel(); task = nil; taskID = nil; running = false }
 
     private func freeSpace() -> Int64 {
         let u = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -220,6 +234,7 @@ final class OfflineSync {
         }
         guard !Task.isCancelled else { return }
         await t.loadAll()                     // Offline braucht die ganze Zeitleiste, nicht nur Angesehenes
+        guard !Task.isCancelled else { return }
         let s = OfflineStore.shared
         // Neueste zuerst – das schaut man am häufigsten an
         let all = t.allLoaded.reversed().map(\.id)

@@ -21,6 +21,17 @@ import MapKit
         XCTAssertEqual(timeline.version, version)
     }
 
+    func testBackgroundWorkYieldsAndCanBeCancelledDuringMapUse() async {
+        let sync = OfflineSync.shared
+        sync.foregroundMedia("test-map", active: true)
+        defer { sync.foregroundMedia("test-map", active: false) }
+        let waiting = Task { await sync.waitForForegroundIdle() }
+        await Task.yield()
+        waiting.cancel()
+        let permitted = await waiting.value
+        XCTAssertFalse(permitted)
+    }
+
     func testCompassClearsStatusBarAndHeader() {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         let controller = UIViewController()
